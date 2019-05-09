@@ -13,7 +13,6 @@
 #define INLINEATTR __attribute__((always_inline))
 #endif
 
-// const int64_t BASE = 32768/3;
 // const int64_t BASE = 32768*4;
 const int64_t BASE = 32768;
 
@@ -48,6 +47,9 @@ static void buffer_init(F *__restrict__ dst, const F *__restrict__ src,
 #define ARG_INDEX(arg, ii, m, jj, n, transpose)         \
   ((transpose) ? arg[((jj) * m) + (ii)] : arg[((ii) * n) + (jj)])
 
+// A simple and general vectorized base case for matrix multiply.
+// This base case computes a INum x JNum submatrix in column-major
+// order from a INum subcolumn of A and a JNum subrow of B.
 template <typename F, int64_t INum, int64_t JNum, bool transpose_lhs, bool transpose_rhs>
 __attribute__((always_inline))
 void matmul_vec
@@ -58,27 +60,36 @@ void matmul_vec
   typedef F vF __attribute__((vector_size(sizeof(F)*INum)));
   vF outv[JNum];
 
+  // Zero-initialize output vectors.
 #pragma clang loop unroll(full)
   for (int64_t vnum = 0; vnum < JNum; ++vnum)
     outv[vnum] = (vF){ 0.0 };
 
+  // Get INum values from a column of lhs.
   vF lhsv;
 #pragma clang loop unroll(full)
   for (int64_t vidx = 0; vidx < INum; ++vidx)
     lhsv[vidx] = ARG_INDEX(lhs, l, kstride, i+vidx, mstride, transpose_lhs);
 
+  // Fill each rhs vector with a value from one of INum rows of rhs.
   vF rhsv[JNum];
 #pragma clang loop unroll(full)
   for (int64_t vnum = 0; vnum < JNum; ++vnum) {
+    // Read the value from a row of rhs.
     F rhs_val = ARG_INDEX(rhs, j+vnum, nstride, l, kstride, transpose_rhs);
+    // Broadcast that value through one of the rhsv.
 #pragma clang loop unroll(full)
     for (int64_t vidx = 0; vidx < INum; ++vidx)
       rhsv[vnum][vidx] = rhs_val;
   }
+
+  // Each output vector gets the element-wise product of lhsv and one
+  // of the rhsv.
 #pragma clang loop unroll(full)
   for (int64_t vnum = 0; vnum < JNum; ++vnum)
     outv[vnum] = lhsv * rhsv[vnum];
 
+  // Add the output vectors to the output matrix.
 #pragma clang loop unroll(full)
   for (int64_t vnum = 0; vnum < JNum; ++vnum) {
 #pragma clang loop unroll(full)
@@ -88,6 +99,78 @@ void matmul_vec
   }
 }
 
+template <typename F, int64_t KNum>
+__attribute__((always_inline))
+void matmul_vec_op
+(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
+ int64_t i, int64_t j, int64_t l,
+ int64_t mstride, int64_t nstride, int64_t kstride) noexcept {
+  // using F = float;
+  // Vector type
+  typedef F vF __attribute__((vector_size(sizeof(F)*8)));
+  vF outv[4];
+
+  // Zero-initialize the output vectors.
+#pragma clang loop unroll(full)
+  for (int64_t vnum = 0; vnum < 4; ++vnum)
+    outv[vnum] = (vF){ 0.0 };
+
+  for (int64_t my_l = l; my_l < l + KNum; ++my_l) {
+    // Store a subcolumn of lhs into lhsv.
+    vF lhsv;
+#pragma clang loop unroll(full)
+    for (int64_t vidx = 0; vidx < 8; ++vidx)
+      lhsv[vidx] = ARG_INDEX(lhs, my_l, kstride, i+vidx, mstride, false);
+
+    // Store a subrow of rhs into rhsv, replicated twice.
+    vF rhsv;
+#pragma clang loop unroll(full)
+    for (int64_t vidx = 0; vidx < 4; ++vidx) {
+      rhsv[vidx] = ARG_INDEX(rhs, j+vidx, nstride, my_l, kstride, true);
+      rhsv[vidx + 4] = rhsv[vidx];
+    }
+
+    // Perform the multiplications.
+    outv[0] += lhsv * rhsv;
+    vF rhsv_p0 = __builtin_shufflevector(rhsv, rhsv, 1, 0, 3, 2, 5, 4, 7, 6);
+    outv[1] += lhsv * rhsv_p0;
+    vF rhsv_p1 = __builtin_shufflevector(rhsv, rhsv, 2, 3, 0, 1, 6, 7, 4, 5);
+    outv[2] += lhsv * rhsv_p1;
+    vF rhsv_p2 = __builtin_shufflevector(rhsv_p0, rhsv_p0, 2, 3, 0, 1, 6, 7, 4, 5);
+    outv[3] += lhsv * rhsv_p2;
+  }
+
+  vF st[8];
+  // A0B0, A1B0, A2B2, A3B2, A4B0, A5B0, A6B2, A7B2
+  st[0] = __builtin_shufflevector(outv[0], outv[1], 0, 9, 2, 11, 4, 13, 6, 15);
+  // A0B1, A1B1, A2B3, A3B3, A4B1, A5B1, A6B3, A7B3
+  st[1] = __builtin_shufflevector(outv[1], outv[0], 0, 9, 2, 11, 4, 13, 6, 15);
+  // A0B2, A1B2, A2B0, A3B0, A4B2, A5B2, A6B0, A7B0
+  st[2] = __builtin_shufflevector(outv[2], outv[3], 0, 9, 2, 11, 4, 13, 6, 15);
+  // A0B3, A1B3, A2B1, A3B1, A4B3, A5B3, A6B1, A7B1
+  st[3] = __builtin_shufflevector(outv[3], outv[2], 0, 9, 2, 11, 4, 13, 6, 15);
+
+  // A0B0, A1B0, A2B0, A3B0, A4B0, A5B0, A6B0, A7B0
+  st[4] = __builtin_shufflevector(st[0], st[2], 0, 1, 10, 11, 4, 5, 14, 15);
+  // A0B1, A1B1, A2B1, A3B1, A4B1, A5B1, A6B1, A7B1
+  st[5] = __builtin_shufflevector(st[1], st[3], 0, 1, 10, 11, 4, 5, 14, 15);
+  // A0B2, A1B2, A2B2, A3B2, A4B2, A5B2, A6B2, A7B2
+  st[6] = __builtin_shufflevector(st[2], st[0], 0, 1, 10, 11, 4, 5, 14, 15);
+  // A0B3, A1B3, A2B3, A3B3, A4B3, A5B3, A6B3, A7B3
+  st[7] = __builtin_shufflevector(st[3], st[1], 0, 1, 10, 11, 4, 5, 14, 15);
+
+
+  // Add the output vectors to the output matrix.
+#pragma clang loop unroll(full)
+  for (int64_t vnum = 0; vnum < 4; ++vnum) {
+#pragma clang loop unroll(full)
+    for (int64_t vidx = 0; vidx < 8; ++vidx) {
+      out[(j+vnum) * mstride + (i+vidx)] += st[4+vnum][vidx];
+    }
+  }
+}
+
+
 #ifdef USE_AVX512
 const int64_t nVec = 8;
 const int64_t mVec = 16;
@@ -95,6 +178,7 @@ const int64_t mVec = 16;
 const int64_t nVec = 4;
 const int64_t mVec = 8;
 #endif
+const int64_t kVec = 16;
 
 template <typename F, bool transpose_lhs, bool transpose_rhs, bool small_n = false>
 void matmul_base(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
@@ -154,7 +238,35 @@ void matmul_base(F *__restrict__ out, const F *__restrict__ lhs, const F *__rest
 //   }
 //   } else {
 
-  for (int64_t l = 0; l < k; ++l) {
+  for (int64_t ll = 0; ll < k/kVec; ++ll) {
+    for (int64_t jj = 0; jj < n/nVec; ++jj) {
+      for (int64_t ii = 0; ii < m/mVec; ++ii)
+        // matmul_vec<F, mVec, nVec, false, true>
+        //   (outTmp, lhsTmp, rhsTmp, mVec * ii, nVec * jj, l, m, n, k);
+        matmul_vec_op<F, kVec>
+          (outTmp, lhsTmp, rhsTmp, mVec * ii, nVec * jj, kVec * ll, m, n, k);
+
+      for (int64_t l = kVec * ll; l < kVec * (ll+1); ++l)
+        for (int64_t j = nVec * jj; j < nVec * (jj+1); ++j)
+#pragma clang loop vectorize(disable)
+          for (int64_t i = mVec * (m/mVec); i < m; ++i)
+            outTmp[j * m + i] +=
+              ARG_INDEX(lhsTmp, l, k, i, m, false) *
+              ARG_INDEX(rhsTmp, j, n, l, k, true);
+    }
+    for (int64_t l = kVec * ll; l < kVec * (ll+1); ++l) {
+      for (int64_t j = nVec * (n/nVec); j < n; ++j) {
+#pragma clang loop vectorize(disable)
+        for (int64_t i = 0; i < m; ++i)
+          outTmp[j * m + i] +=
+            ARG_INDEX(lhsTmp, l, k, i, m, false) *
+            ARG_INDEX(rhsTmp, j, n, l, k, true);
+      }
+    }
+  }
+
+  // for (int64_t l = 0; l < k; ++l) {
+  for (int64_t l = kVec * (k/kVec); l < k; ++l) {
     for (int64_t jj = 0; jj < n/nVec; ++jj) {
       for (int64_t ii = 0; ii < m/mVec; ++ii)
         // matmul_vec<F, 8, nVec, transpose_lhs, transpose_rhs>
