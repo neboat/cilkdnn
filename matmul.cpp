@@ -1,5 +1,5 @@
 // Compile string:
-// ~/tapir/src/build/bin/clang++ -c matmul.cpp -emit-llvm -fcilkplus -ftapir=none -std=c++11 -ffast-math  -mavx -mfma -mavx2 -mavx512f -mavx512cd -O3
+// ~/tapir/src/build/bin/clang++ -c matmul.cpp -emit-llvm -fcilkplus -ftapir=none -std=c++11 -ffast-math  -mavx -mfma -mavx2 # -mavx512f -mavx512cd -O3
 
 #include <algorithm>
 #include <cassert>
@@ -13,7 +13,6 @@
 #define INLINEATTR __attribute__((always_inline))
 #endif
 
-// const int64_t BASE = 32768*4;
 const int64_t BASE = 32768;
 
 template <typename F>
@@ -99,15 +98,21 @@ void matmul_vec
   }
 }
 
+// A specialized base case that computes the outer product of
+// subcolumns of A and subrows of B.  Unlike the more general
+// vectorized base case, this version uses fewer memory accesses by
+// storing the outer-product result in vector registers.
 template <typename F, int64_t KNum>
 __attribute__((always_inline))
 void matmul_vec_op
 (F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
  int64_t i, int64_t j, int64_t l,
  int64_t mstride, int64_t nstride, int64_t kstride) noexcept {
-  // using F = float;
+
   // Vector type
   typedef F vF __attribute__((vector_size(sizeof(F)*8)));
+
+  // Vectors storing output submatrix.
   vF outv[4];
 
   // Zero-initialize the output vectors.
@@ -140,6 +145,8 @@ void matmul_vec_op
     outv[3] += lhsv * rhsv_p2;
   }
 
+  // Shuffle the output vectors to support simple vector-add
+  // operations to store the result back into the output matrix.
   vF st[8];
   // A0B0, A1B0, A2B2, A3B2, A4B0, A5B0, A6B2, A7B2
   st[0] = __builtin_shufflevector(outv[0], outv[1], 0, 9, 2, 11, 4, 13, 6, 15);
@@ -191,10 +198,6 @@ void matmul_base(F *__restrict__ out, const F *__restrict__ lhs, const F *__rest
   for (int64_t j = 0; j < n; ++j)
     for (int64_t i = 0; i < m; ++i)
       outTmp[j * m + i] = 0.0;
-  // F lhsTmp[((transpose_lhs) ? (m*k) : (k*m))];
-  // F rhsTmp[((transpose_rhs) ? (k*n) : (n*k))];
-  // buffer_init(lhsTmp, lhs, m, k, mstride, kstride, transpose_lhs);
-  // buffer_init(rhsTmp, rhs, k, n, kstride, nstride, transpose_rhs);
   F lhsTmp[(k*m)];
   F rhsTmp[(k*n)];
   buffer_init(lhsTmp, lhs, m, k, mstride, kstride, transpose_lhs, transpose_lhs);
@@ -205,111 +208,110 @@ void matmul_base(F *__restrict__ out, const F *__restrict__ lhs, const F *__rest
   //     for (int l = 0; l < k; ++l)
   //       outTmp[j * m + i] += lhsTmp[l * m + i] * rhsTmp[j * k + l];
 
-//   if (false) {
-//   for (int64_t l = 0; l < k; ++l) {
-//     for (int64_t ii = 0; ii < m/mVec; ++ii) {
-// #pragma clang loop unroll(full)
-//       for (int64_t j = 0; j < n; ++j)
-//         matmul_vec<F, mVec, 1, false, true>
-//           (outTmp, lhsTmp, rhsTmp, mVec * ii, j, l, m, n, k);
-//         // outTmp[j * m + i] +=
-//         //   ARG_INDEX(lhsTmp, l, k, i, m, false) *
-//         //   ARG_INDEX(rhsTmp, j, n, l, k, true);
-// //       for (int64_t j = nVec * (n/nVec); j < n; ++j)
-// //         matmul_vec<F, mVec, nVec, false, true>
-// //           (outTmp, lhsTmp, rhsTmp, mVec * ii, nVec * jj, l, m, n, k);
+//   for (int64_t ll = 0; ll < k/kVec; ++ll) {
+//     for (int64_t jj = 0; jj < n/nVec; ++jj) {
+//       for (int64_t ii = 0; ii < m/mVec; ++ii)
+//         // matmul_vec<F, mVec, nVec, false, true>
+//         //   (outTmp, lhsTmp, rhsTmp, mVec * ii, nVec * jj, l, m, n, k);
+//         matmul_vec_op<F, kVec>
+//           (outTmp, lhsTmp, rhsTmp, mVec * ii, nVec * jj, kVec * ll, m, n, k);
 
-// //       if (n % nVec) {
-// //       for (int64_t i = mVec * ii; i < mVec * (ii+1); ++i)
-// // #pragma clang loop vectorize(disable)
-// //         for (int64_t j = nVec * (n/nVec); j < n; ++j)
-// //           outTmp[j * m + i] +=
-// //             ARG_INDEX(lhsTmp, l, k, i, m, false) *
-// //             ARG_INDEX(rhsTmp, j, n, l, k, true);
-// //       }
-//     }
-//     for (int64_t i = mVec * (m/mVec); i < m; ++i) {
+//       for (int64_t l = kVec * ll; l < kVec * (ll+1); ++l)
+//         for (int64_t j = nVec * jj; j < nVec * (jj+1); ++j)
 // #pragma clang loop vectorize(disable)
-//       for (int64_t j = 0; j < n; ++j)
-//         outTmp[j * m + i] +=
-//           ARG_INDEX(lhsTmp, l, k, i, m, false) *
-//           ARG_INDEX(rhsTmp, j, n, l, k, true);
+//           for (int64_t i = mVec * (m/mVec); i < m; ++i)
+//             outTmp[j * m + i] +=
+//               ARG_INDEX(lhsTmp, l, k, i, m, false) *
+//               ARG_INDEX(rhsTmp, j, n, l, k, true);
+//     }
+//     for (int64_t l = kVec * ll; l < kVec * (ll+1); ++l) {
+//       for (int64_t j = nVec * (n/nVec); j < n; ++j) {
+// #pragma clang loop vectorize(disable)
+//         for (int64_t i = 0; i < m; ++i)
+//           outTmp[j * m + i] +=
+//             ARG_INDEX(lhsTmp, l, k, i, m, false) *
+//             ARG_INDEX(rhsTmp, j, n, l, k, true);
+//       }
 //     }
 //   }
-//   } else {
+//   // for (int64_t l = 0; l < k; ++l) {
+//   for (int64_t l = kVec * (k/kVec); l < k; ++l) {
+//     for (int64_t jj = 0; jj < n/nVec; ++jj) {
+//       for (int64_t ii = 0; ii < m/mVec; ++ii)
+//         // matmul_vec<F, 8, nVec, transpose_lhs, transpose_rhs>
+//         //   (out, lhs, rhs, 8 * ii, nVec * jj, l, mstride, nstride, kstride);
+//         // matmul_vec<F, 8, nVec, transpose_lhs, transpose_rhs>
+//         //   (outTmp, lhsTmp, rhsTmp, 8 * ii, nVec * jj, l, m, n, k);
+//         matmul_vec<F, mVec, nVec, false, true>
+//           (outTmp, lhsTmp, rhsTmp, mVec * ii, nVec * jj, l, m, n, k);
+//       for (int64_t j = nVec * jj; j < nVec * (jj+1); ++j)
+// #pragma clang loop vectorize(disable)
+//         for (int64_t i = mVec * (m/mVec); i < m; ++i)
+//           // out[j * mstride + i] +=
+//           //   ARG_INDEX(lhs, l, kstride, i, mstride, transpose_lhs) *
+//           //   ARG_INDEX(rhs, j, nstride, l, kstride, transpose_rhs);
+//           outTmp[j * m + i] +=
+//             ARG_INDEX(lhsTmp, l, k, i, m, false) *
+//             ARG_INDEX(rhsTmp, j, n, l, k, true);
+//     }
+//     for (int64_t j = nVec * (n/nVec); j < n; ++j) {
+//       // for (int64_t ii = 0; ii < m/8; ++ii)
+//       //   matmul_vec<F, 8, 1, transpose_lhs, transpose_rhs>
+//       //     (out, lhs, rhs, 8 * ii, j, l, mstride, nstride, kstride);
+// #pragma clang loop vectorize(disable)
+//       // for (int64_t i = 8 * (m/8); i < m; ++i)
+//       for (int64_t i = 0; i < m; ++i)
+// // #pragma clang loop unroll(full)
+// //         for (int64_t j = nVec * (n/nVec); j < n; ++j) {
+// //           out[j * mstride + i] +=
+// //             ARG_INDEX(lhs, l, kstride, i, mstride, transpose_lhs) *
+// //             ARG_INDEX(rhs, j, nstride, l, kstride, transpose_rhs);
+//           outTmp[j * m + i] +=
+//             ARG_INDEX(lhsTmp, l, k, i, m, false) *
+//             ARG_INDEX(rhsTmp, j, n, l, k, true);
+//       // for (int64_t ii = 0; ii < (m/mVec); ++ii)
+//       //   matmul_vec<F, mVec, 1, false, true>
+//       //     (outTmp, lhsTmp, rhsTmp, mVec * ii, j, l, m, n, k);
+//       // for (int64_t i = mVec * (m/mVec); i < m; ++i)
+//       //     outTmp[j * m + i] +=
+//       //       ARG_INDEX(lhsTmp, l, k, i, m, false) *
+//       //       ARG_INDEX(rhsTmp, j, n, l, k, true);
+//     }
+//   }
 
-  for (int64_t ll = 0; ll < k/kVec; ++ll) {
-    for (int64_t jj = 0; jj < n/nVec; ++jj) {
-      for (int64_t ii = 0; ii < m/mVec; ++ii)
+  for (int64_t jj = 0; jj < n/nVec; ++jj) {
+    for (int64_t ii = 0; ii < m/mVec; ++ii) {
+      for (int64_t ll = 0; ll < k/kVec; ++ll) {
         // matmul_vec<F, mVec, nVec, false, true>
         //   (outTmp, lhsTmp, rhsTmp, mVec * ii, nVec * jj, l, m, n, k);
         matmul_vec_op<F, kVec>
           (outTmp, lhsTmp, rhsTmp, mVec * ii, nVec * jj, kVec * ll, m, n, k);
-
-      for (int64_t l = kVec * ll; l < kVec * (ll+1); ++l)
-        for (int64_t j = nVec * jj; j < nVec * (jj+1); ++j)
-#pragma clang loop vectorize(disable)
-          for (int64_t i = mVec * (m/mVec); i < m; ++i)
-            outTmp[j * m + i] +=
-              ARG_INDEX(lhsTmp, l, k, i, m, false) *
-              ARG_INDEX(rhsTmp, j, n, l, k, true);
+      }
+      for (int64_t l = kVec * (k/kVec); l < k; ++l)
+        matmul_vec<F, mVec, nVec, false, true>
+          (outTmp, lhsTmp, rhsTmp, mVec * ii, nVec * jj, l, m, n, k);
     }
-    for (int64_t l = kVec * ll; l < kVec * (ll+1); ++l) {
-      for (int64_t j = nVec * (n/nVec); j < n; ++j) {
+    for (int64_t j = nVec * jj; j < nVec * (jj+1); ++j) {
+      for (int64_t l = 0; l < k; ++l) {
 #pragma clang loop vectorize(disable)
-        for (int64_t i = 0; i < m; ++i)
+        for (int64_t i = mVec * (m/mVec); i < m; ++i) {
           outTmp[j * m + i] +=
             ARG_INDEX(lhsTmp, l, k, i, m, false) *
             ARG_INDEX(rhsTmp, j, n, l, k, true);
+        }
       }
     }
   }
-
-  // for (int64_t l = 0; l < k; ++l) {
-  for (int64_t l = kVec * (k/kVec); l < k; ++l) {
-    for (int64_t jj = 0; jj < n/nVec; ++jj) {
-      for (int64_t ii = 0; ii < m/mVec; ++ii)
-        // matmul_vec<F, 8, nVec, transpose_lhs, transpose_rhs>
-        //   (out, lhs, rhs, 8 * ii, nVec * jj, l, mstride, nstride, kstride);
-        // matmul_vec<F, 8, nVec, transpose_lhs, transpose_rhs>
-        //   (outTmp, lhsTmp, rhsTmp, 8 * ii, nVec * jj, l, m, n, k);
-        matmul_vec<F, mVec, nVec, false, true>
-          (outTmp, lhsTmp, rhsTmp, mVec * ii, nVec * jj, l, m, n, k);
-      for (int64_t j = nVec * jj; j < nVec * (jj+1); ++j)
-#pragma clang loop vectorize(disable)
-        for (int64_t i = mVec * (m/mVec); i < m; ++i)
-          // out[j * mstride + i] +=
-          //   ARG_INDEX(lhs, l, kstride, i, mstride, transpose_lhs) *
-          //   ARG_INDEX(rhs, j, nstride, l, kstride, transpose_rhs);
-          outTmp[j * m + i] +=
-            ARG_INDEX(lhsTmp, l, k, i, m, false) *
-            ARG_INDEX(rhsTmp, j, n, l, k, true);
-    }
-    for (int64_t j = nVec * (n/nVec); j < n; ++j) {
-      // for (int64_t ii = 0; ii < m/8; ++ii)
-      //   matmul_vec<F, 8, 1, transpose_lhs, transpose_rhs>
-      //     (out, lhs, rhs, 8 * ii, j, l, mstride, nstride, kstride);
-#pragma clang loop vectorize(disable)
-      // for (int64_t i = 8 * (m/8); i < m; ++i)
+  for (int64_t j = nVec * (n/nVec); j < n; ++j) {
+    for (int64_t l = 0; l < k; ++l) {
+      // #pragma clang loop vectorize(disable)
       for (int64_t i = 0; i < m; ++i)
-// #pragma clang loop unroll(full)
-//         for (int64_t j = nVec * (n/nVec); j < n; ++j) {
-//           out[j * mstride + i] +=
-//             ARG_INDEX(lhs, l, kstride, i, mstride, transpose_lhs) *
-//             ARG_INDEX(rhs, j, nstride, l, kstride, transpose_rhs);
           outTmp[j * m + i] +=
             ARG_INDEX(lhsTmp, l, k, i, m, false) *
             ARG_INDEX(rhsTmp, j, n, l, k, true);
-      // for (int64_t ii = 0; ii < (m/mVec); ++ii)
-      //   matmul_vec<F, mVec, 1, false, true>
-      //     (outTmp, lhsTmp, rhsTmp, mVec * ii, j, l, m, n, k);
-      // for (int64_t i = mVec * (m/mVec); i < m; ++i)
-      //     outTmp[j * m + i] +=
-      //       ARG_INDEX(lhsTmp, l, k, i, m, false) *
-      //       ARG_INDEX(rhsTmp, j, n, l, k, true);
     }
   }
-  // }
+
   // Add the result of this base-case multiplication back into out.
   for (int j = 0; j < n; ++j)
     for (int i = 0; i < m; ++i)
@@ -442,8 +444,6 @@ void matmul(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict_
       out[j * m + i] = 0.0;
     }
   }
-  // matmul_dac<F, transpose_lhs, transpose_rhs>
-  //   (out, lhs, rhs, m, n, k, m, n, k);
   matmul_dac<F>
     (out, lhs, rhs, m, n, k, m, n, k, transpose_lhs, transpose_rhs);
 }
@@ -504,84 +504,183 @@ void matmul_f64(double *__restrict__ out, const double *__restrict__ lhs, const 
 #endif
 }
 
-// INLINEATTR
-// void matmul_f32_0_0(float *__restrict__ out, const float *__restrict__ lhs, const float *__restrict__ rhs,
-//                     int64_t m, int64_t n, int64_t k) {
-// #ifndef NDEBUG
-//   matmul<float, false, false>(out, lhs, rhs, m, n, k);
-// #else
-//   matmul<float, false, false>(out, lhs, rhs, m, n, k);
-// #endif
-// }
+}
 
-// INLINEATTR
-// void matmul_f32_0_1(float *__restrict__ out, const float *__restrict__ lhs, const float *__restrict__ rhs,
-//                     int64_t m, int64_t n, int64_t k) {
-// #ifndef NDEBUG
-//   matmul<float, false, true>(out, lhs, rhs, m, n, k);
-// #else
-//   matmul<float, false, true>(out, lhs, rhs, m, n, k);
-// #endif
-// }
+#define OUT_IDX(T, b, i, j, ch, batches, rows, cols, channels)          \
+  ((T)[((b) * (rows) * (cols) * (channels)) +                           \
+       ((i) * (cols) * (channels)) +                                    \
+       ((j) * (channels)) +                                             \
+       (ch)])
 
-// INLINEATTR
-// void matmul_f32_1_0(float *__restrict__ out, const float *__restrict__ lhs, const float *__restrict__ rhs,
-//                     int64_t m, int64_t n, int64_t k) {
-// #ifndef NDEBUG
-//   matmul<float, true, false>(out, lhs, rhs, m, n, k);
-// #else
-//   matmul<float, true, false>(out, lhs, rhs, m, n, k);
-// #endif
-// }
+#define INPUT_IDX(T, b, i, j, ch, batches, rows, cols, channels)        \
+  ((T)[((b) * (rows) * (cols) * (channels)) +                           \
+       ((i) * (cols) * (channels)) +                                    \
+       ((j) * (channels)) +                                             \
+       (ch)])
 
-// INLINEATTR
-// void matmul_f32_1_1(float *__restrict__ out, const float *__restrict__ lhs, const float *__restrict__ rhs,
-//                     int64_t m, int64_t n, int64_t k) {
-// #ifndef NDEBUG
-//   matmul<float, true, true>(out, lhs, rhs, m, n, k);
-// #else
-//   matmul<float, true, true>(out, lhs, rhs, m, n, k);
-// #endif
-// }
+#define KERNEL_IDX(T, i, j, ch, f, rows, cols, channels, filters)       \
+  ((T)[((i) * (cols) * (channels) * (filters)) +                        \
+       ((j) * (channels) * (filters)) +                                 \
+       ((ch) * (filters)) +                                             \
+       (f)])
 
-// INLINEATTR
-// void matmul_f64_0_0(double *__restrict__ out, const double *__restrict__ lhs, const double *__restrict__ rhs,
-//                     int64_t m, int64_t n, int64_t k) {
-// #ifndef NDEBUG
-//   matmul<double, false, false>(out, lhs, rhs, m, n, k);
-// #else
-//   matmul<double, false, false>(out, lhs, rhs, m, n, k);
-// #endif
-// }
+// 2D convolution (actually 2D cross-correlation, but ML terminology
+// calls this convolution).  Assumes standard NHWC data format in TF.
+template <typename F>
+INLINEATTR
+void conv2d_loops(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
+                  int64_t input_batch, int64_t input_rows, int64_t input_cols, int64_t input_channels,
+                  int64_t kernel_rows, int64_t kernel_cols, int64_t kernel_channels, int64_t kernel_filters,
+                  int64_t output_rows, int64_t output_cols,
+                  // Stride of the sliding window in each dimension
+                  int64_t row_stride, int64_t col_stride,
+                  int64_t padding_top, int64_t padding_bottom, int64_t padding_left, int64_t padding_right,
+                  int64_t lhs_row_dilation, int64_t lhs_col_dilation,
+                  int64_t rhs_row_dilation, int64_t rhs_col_dilation) {
+  // In Eigen terms:
+  //   kernel = patch
+  //   rhs_col_dilation = in_row_stride
+  //   rhs_row_dilation = in_col_stride
+  //   lhs_col_dilation = row_inflate_stride
+  //   lhs_row_dilation = col_inflate_stride
 
-// INLINEATTR
-// void matmul_f64_0_1(double *__restrict__ out, const double *__restrict__ lhs, const double *__restrict__ rhs,
-//                     int64_t m, int64_t n, int64_t k) {
-// #ifndef NDEBUG
-//   matmul<double, false, true>(out, lhs, rhs, m, n, k);
-// #else
-//   matmul<double, false, true>(out, lhs, rhs, m, n, k);
-// #endif
-// }
+  // int64_t rows_with_pad = input_rows + padding_top + padding_bot;
+  // int64_t cols_with_pad = input_rows + padding_left + padding_right;
+  // F *padded_lhs = new F[input_batch *
+  //                       rows_with_pad *
+  //                       cols_with_pad *
+  //                       input_channels];
+  // for (int64_t b = 0; b < input_batch; ++b)
+  //   for (int64_t in_i = 0; in_i < input_rows; ++in_i)
+  //     for (int64_t in_j = 0; in_j < input_cols; ++in_j)
+  //       for (int64_t in_ch = 0; in_ch < input_channels; ++in_ch)
+  //         padded_lhs[(b * rows_with_pad * cols_with_pad * input_channels) +
+  //                    ((in_i + padding_top) * cols_with_pad * input_channels) +
+  //                    ((in_j + padding_left) * input_channels) +
+  //                    in_ch] =
+  //           lhs[(b * input_rows * input_cols * input_channels) +
+  //               (in_i * input_cols * input_channels) +
+  //               (in_j * input_channels) +
+  //               in_ch];
 
-// INLINEATTR
-// void matmul_f64_1_0(double *__restrict__ out, const double *__restrict__ lhs, const double *__restrict__ rhs,
-//                     int64_t m, int64_t n, int64_t k) {
-// #ifndef NDEBUG
-//   matmul<double, true, false>(out, lhs, rhs, m, n, k);
-// #else
-//   matmul<double, true, false>(out, lhs, rhs, m, n, k);
-// #endif
-// }
+  if (lhs_row_dilation == 1 && lhs_col_dilation == 1) {
+    // std::cout << "Normal convolution\n";
+    // Normal convolution.
+    cilk_for (int64_t b = 0; b < input_batch; ++b) {
+      cilk_for (int64_t oi = 0; oi < output_rows; ++oi) {
+        cilk_for (int64_t oj = 0; oj < output_cols; ++oj) {
+          cilk_for (int64_t och = 0; och < kernel_filters; ++och) {
+            F accum = 0.0;
+            for (int64_t di = 0; di < kernel_rows; ++di) {
+              for (int64_t dj = 0; dj < kernel_cols; ++dj) {
+                for (int64_t in_ch = 0; in_ch < input_channels; ++in_ch) {
+                  int64_t in_i = (row_stride * oi) + (di * rhs_row_dilation) - padding_top;
+                  int64_t in_j = (col_stride * oj) + (dj * rhs_col_dilation) - padding_left;
+                  if (in_i < 0 || in_i >= input_rows || in_j < 0 || in_j >= input_cols)
+                    continue;
 
-// INLINEATTR
-// void matmul_f64_1_1(double *__restrict__ out, const double *__restrict__ lhs, const double *__restrict__ rhs,
-//                     int64_t m, int64_t n, int64_t k) {
-// #ifndef NDEBUG
-//   matmul<double, true, true>(out, lhs, rhs, m, n, k);
-// #else
-//   matmul<double, true, true>(out, lhs, rhs, m, n, k);
-// #endif
-// }
+                  accum +=
+                    INPUT_IDX(lhs, b, in_i, in_j, in_ch,
+                              input_batch, input_rows, input_cols, input_channels) *
+                    KERNEL_IDX(rhs, di, dj, in_ch, och,
+                               kernel_rows, kernel_cols, kernel_channels, kernel_filters);
+                  // accum +=
+                  //   lhs[(b * input_rows * input_cols * input_channels) +
+                  //       (in_i * input_cols * input_channels) +
+                  //       (in_j * input_channels) +
+                  //       in_ch] *
+                  //   rhs[(di * kernel_cols * kernel_channels * kernel_filters) +
+                  //       (dj * kernel_channels * kernel_filters) +
+                  //       (in_ch * kernel_filters) +
+                  //       och];
+                }
+              }
+            }
+            OUT_IDX(out, b, oi, oj, och,
+                    input_batch, output_rows, output_cols, kernel_filters) = accum;
+            // out[(b * output_rows * output_cols * kernel_filters) +
+            //     (oi * output_cols * kernel_filters) +
+            //     (oj * kernel_filters) +
+            //     och] = accum;
+          }
+        }
+      }
+    }
+  } else {
+    // Transpose convolution
+    // std::cout << "Transpose convolution\n";
+    cilk_for (int64_t b = 0; b < input_batch; ++b) {
+      cilk_for (int64_t oi = 0; oi < output_rows; ++oi) {
+        cilk_for (int64_t oj = 0; oj < output_cols; ++oj) {
+          cilk_for (int64_t och = 0; och < kernel_filters; ++och) {
+            F accum = 0.0;
+            for (int64_t di = 0; di < kernel_rows / lhs_row_dilation; ++di) {
+              for (int64_t dj = 0; dj < kernel_cols / lhs_col_dilation; ++dj) {
+                for (int64_t in_ch = 0; in_ch < input_channels; ++in_ch) {
+                  int64_t in_i = (oi + padding_top)/lhs_row_dilation - di;
+                  int64_t in_j = (oj + padding_left)/lhs_col_dilation - dj;
 
+                  int64_t k_i = (lhs_row_dilation * di) + ((oi + padding_top) % lhs_row_dilation);
+                  int64_t k_j = (lhs_col_dilation * dj) + ((oj + padding_left) % lhs_col_dilation);
+                  if (in_i < 0 || in_i >= input_rows || in_j < 0 || in_j >= input_cols)
+                    continue;
+                  if (in_i < 0 || in_i >= input_rows || in_j < 0 || in_j >= input_cols)
+                    continue;
+
+                  accum +=
+                    INPUT_IDX(lhs, b, in_i, in_j, in_ch,
+                              input_batch, input_rows, input_cols, input_channels) *
+                    KERNEL_IDX(rhs, k_i, k_j, in_ch, och,
+                               kernel_rows, kernel_cols, kernel_channels, kernel_filters);
+                  // accum +=
+                  //   lhs[(b * input_rows * input_cols * input_channels) +
+                  //       (in_i * input_cols * input_channels) +
+                  //       (in_j * input_channels) +
+                  //       in_ch] *
+                  //   rhs[(k_i * kernel_cols * kernel_channels * kernel_filters) +
+                  //       (k_j * kernel_channels * kernel_filters) +
+                  //       (in_ch * kernel_filters) +
+                  //       och];
+                }
+              }
+            }
+            OUT_IDX(out, b, oi, oj, och,
+                    input_batch, output_rows, output_cols, kernel_filters) = accum;
+            
+            // out[(b * output_rows * output_cols * kernel_filters) +
+            //     (oi * output_cols * kernel_filters) +
+            //     (oj * kernel_filters) +
+            //     och] = accum;
+          }
+        }
+      }
+    }
+  }
+}
+
+template void
+conv2d_loops<float>(float *__restrict__ out, const float *__restrict__ lhs, const float *__restrict__ rhs,
+                    int64_t input_batch, int64_t input_rows, int64_t input_cols, int64_t input_channels,
+                    int64_t kernel_rows, int64_t kernel_cols, int64_t kernel_channels, int64_t kernel_filters,
+                    int64_t output_rows, int64_t output_cols,
+                    int64_t row_stride, int64_t col_stride,
+                    int64_t padding_top, int64_t padding_bottom, int64_t padding_left, int64_t padding_right,
+                    int64_t lhs_row_dilation, int64_t lhs_col_dilation,
+                    int64_t rhs_row_dilation, int64_t rhs_col_dilation);
+
+extern "C" {
+INLINEATTR
+void conv2d_f32(float *__restrict__ out, const float *__restrict__ lhs, const float *__restrict__ rhs,
+                int64_t input_batch, int64_t input_rows, int64_t input_cols, int64_t input_channels,
+                int64_t kernel_rows, int64_t kernel_cols, int64_t kernel_channels, int64_t kernel_filters,
+                int64_t output_rows, int64_t output_cols,
+                int64_t row_stride, int64_t col_stride,
+                int64_t padding_top, int64_t padding_bottom, int64_t padding_left, int64_t padding_right,
+                int64_t lhs_row_dilation, int64_t lhs_col_dilation,
+                int64_t rhs_row_dilation, int64_t rhs_col_dilation) {
+  conv2d_loops<float>(out, lhs, rhs, input_batch, input_rows, input_cols, input_channels, kernel_rows, kernel_cols,
+                      kernel_channels, kernel_filters, output_rows, output_cols, row_stride, col_stride,
+                      padding_top, padding_bottom, padding_left, padding_right, lhs_row_dilation, lhs_col_dilation,
+                      rhs_row_dilation, rhs_col_dilation);
+}
 }

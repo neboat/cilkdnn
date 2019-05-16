@@ -1,0 +1,9 @@
+*~
+test*
+*.out
+*.ll
+*.bc
+*.o
+*.so
+vgcore*
+perf.data*
