@@ -1,7 +1,7 @@
-TARGETS = matmul.bc test test-conv2d cilknn.so
+TARGETS = matmul.bc test test-conv2d cilkdnn.so
 
 CXX=~/tapir/src/build/bin/clang++
-CFLAGS=-std=c++11 -fcilkplus -ffast-math -mavx -mfma -mavx2 -Wall
+CFLAGS=-std=c++11 -fcilkplus -ffast-math -Wall -mavx -mfma -mavx2
 AVX512FLAGS=-mavx512f -mavx512cd -DUSE_AVX512
 
 .PHONY : clean all
@@ -17,7 +17,7 @@ test : test.cpp matmul.cpp
 test-conv2d : test-conv2d.cpp matmul.cpp
 	$(CXX) $(CFLAGS) -g $^ -o $@ -DNOINLINEATTR -O3 # -march=native
 
-cilknn.so : matmul.cpp cilknn.cpp
+cilkdnn.so : matmul.cpp cilkdnn.cpp
 	$(CXX) $(CFLAGS) -g -fPIC -shared -I/usr/include/python2.7/ -lboost_python -lboost_numpy -lpython2.7 $^ -o $@ -DNOINLINEATTR -O3
 
 clean:
