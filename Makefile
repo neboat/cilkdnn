@@ -16,13 +16,13 @@ all: $(TARGETS)
 %.ll : %_bcgen.bc
 	llvm-dis $^ 
 
-test-matmul : test-matmul.cpp 
+test-matmul : test/test-matmul.cpp 
 	$(CXX) -I$(INCLUDE_DIR) $(CFLAGS) -g $^ -o $@ -DNOINLINEATTR -O3 # -march=native
 
-test-conv2d : test-conv2d.cpp 
+test-conv2d : test/test-conv2d.cpp 
 	$(CXX) -I$(INCLUDE_DIR) $(CFLAGS) -g $^ -o $@ -DNOINLINEATTR -O3 # -march=native
 
-cilkdnn.so : cilkdnn.cpp
+cilkdnn.so : src/cilkdnn.cpp
 	$(CXX) -I$(INCLUDE_DIR) $(CFLAGS) -g -fPIC -shared -I/usr/include/python2.7/ -lboost_python -lboost_numpy -lpython2.7 $^ -o $@ -DNOINLINEATTR -O3
 
 clean:
