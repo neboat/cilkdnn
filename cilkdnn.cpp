@@ -3,6 +3,10 @@
 #include <boost/python/numpy.hpp>
 #include <iterator>
 
+#include <cilkdnn/conv2d.hpp>
+#include <cilkdnn/matmul.hpp>
+
+
 using namespace boost::python;
 namespace bn = boost::python::numpy;
 

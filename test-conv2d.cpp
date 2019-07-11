@@ -4,6 +4,8 @@
 #include <cstdlib>
 #include <iostream>
 
+#include <cilkdnn/conv2d.hpp>
+
 template <typename F>
 void conv2d_loops(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
                   int64_t input_batch, int64_t input_rows, int64_t input_cols, int64_t input_channels,

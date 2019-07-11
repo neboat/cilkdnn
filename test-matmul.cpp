@@ -4,6 +4,8 @@
 #include <cstdlib>
 #include <iostream>
 
+#include <cilkdnn/matmul.hpp>
+
 // template <typename F, bool transpose_lhs, bool transpose_rhs>
 // void matmul(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
 //             int64_t m, int64_t n, int64_t k);
@@ -12,13 +14,13 @@
 // void matmul_ploops(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
 //                    int64_t m, int64_t n, int64_t k);
 
-template <typename F>
-void matmul(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
-            int64_t m, int64_t n, int64_t k, int32_t transpose_lhs, int32_t transpose_rhs);
+// template <typename F>
+// void matmul(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
+//             int64_t m, int64_t n, int64_t k, int32_t transpose_lhs, int32_t transpose_rhs);
 
-template <typename F>
-void matmul_ploops(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
-                   int64_t m, int64_t n, int64_t k, int32_t transpose_lhs, int32_t transpose_rhs);
+// template <typename F>
+// void matmul_ploops(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
+//                    int64_t m, int64_t n, int64_t k, int32_t transpose_lhs, int32_t transpose_rhs);
 
 int main(int argc, char *argv[]) {
   int m = 10;
