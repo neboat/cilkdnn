@@ -1,9 +1,11 @@
 *~
-test*
+build
+build_clang*
 *.out
 *.ll
 *.bc
 *.o
 *.so
+*.gch
 vgcore*
 perf.data*
