@@ -30,3 +30,14 @@ generate_bc(matmul)
 setup_test_exe(conv2d)
 add_test(run_test-conv2d test-conv2d)
 generate_bc(conv2d)
+
+
+# Run Python script as part of build.
+configure_file(cilkdnn_pytest.py cilkdnn_pytest.py COPYONLY)
+add_test(NAME run_cilkdnn_pytest
+         COMMAND ${PYTHON_EXECUTABLE} cilkdnn_pytest.py
+         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+# TBD: there may be a more robust way to locate cilknn.so in the build
+# directory, but this works for now.       
+set(cilknn_dir ${PROJECT_BINARY_DIR})
+set_tests_properties(run_cilkdnn_pytest PROPERTIES ENVIRONMENT "PYTHONPATH=${cilknn_dir}")
