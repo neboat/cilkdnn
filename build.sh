@@ -15,6 +15,7 @@ rm -rf ${BUILD_DIR}
 mdkir ${BUILD_DIR}
 cmake -DCMAKE_TOOLCHAIN_FILE=toolchains/${TOOLCHAIN}.cmake -H. -B${BUILD_DIR}
 make -j -C ${BUILD_DIR}
-make -j -C ${BUILD_DIR} test
+cd ${BUILD_DIR}; ctest --output-on-failure
+
 
 
