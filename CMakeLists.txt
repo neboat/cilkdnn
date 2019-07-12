@@ -9,20 +9,10 @@ include(FindPythonInterp)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -fcilkplus -ffast-math -Wall -mavx")
 
-add_library(cilknn SHARED src/cilkdnn.cpp)
+# Generate output files we want to export.
+add_subdirectory(src)
 
-target_include_directories(cilknn PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}/include
-  ${Boost_INCLUDE_DIRS}
-  ${PYTHON_INCLUDE_DIRS})
-
-target_link_libraries(cilknn PUBLIC
-   ${Boost_LIBRARIES}
-   ${PYTHON_LIBRARIES})
-
-# Don't append 'lib' prefix to the .so for Python 
-set_target_properties( cilknn PROPERTIES PREFIX "")
-
+# Test code
 enable_testing()
 add_subdirectory(test)
  
