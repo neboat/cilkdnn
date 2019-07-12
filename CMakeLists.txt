@@ -4,7 +4,7 @@ project(cilkdnn VERSION 0.1 LANGUAGES CXX)
 
 # Find external library dependencies using default CMake macros
 find_package(PythonLibs 2.7 REQUIRED)
-find_package(Boost 1.65 REQUIRED COMPONENTS system python numpy)
+find_package(Boost 1.63 REQUIRED COMPONENTS system python numpy)
 include(FindPythonInterp)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -fcilkplus -ffast-math -Wall -mavx")
