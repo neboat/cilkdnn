@@ -2,10 +2,11 @@ function (setup_test_exe test_name)
     add_executable(test-${test_name} test-${test_name}.cpp)
     target_include_directories(test-${test_name} PRIVATE ${PROJECT_SOURCE_DIR}/include)
     target_compile_options(test-${test_name} PRIVATE "-O3")
+    target_link_libraries(test-${test_name} tcmalloc)
 endfunction()  
 
 setup_test_exe(matmul)
-add_test(run_test-matmul test-matmul COMMAND test-matmul 100 100 100)
+add_test(run_test-matmul test-matmul COMMAND test-matmul -c 100 100 100)
 
 setup_test_exe(conv2d)
 add_test(run_test-conv2d test-conv2d)
