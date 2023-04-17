@@ -20,6 +20,15 @@ const int64_t BASE = 32768 * 24;
 #define ARG_INDEX(arg, ii, m, jj, n, transpose)                         \
   ((transpose) ? arg[((jj) * m) + (ii)] : arg[((ii) * n) + (jj)])
 
+__attribute__((always_inline))
+static int64_t split_dim(int64_t n) {
+  // Special case: n is a power of 2.
+  if ((n & -n) == n)
+    return n/2;
+  const int64_t split = 1 << ((8 * sizeof(int64_t)) - __builtin_clzl(n - 1));
+  return split / 2;
+}
+
 template <typename F>
 __attribute__((always_inline)) static void
 buffer_transpose(F *__restrict__ dst, const F *__restrict__ src, int64_t x,
@@ -65,8 +74,15 @@ buffer_copy(F *__restrict__ dst, const F *__restrict__ src, int64_t x,
       }
     }
   }
+  for (int64_t ii = 0; ii < x / CBASE; ++ii) {
+    for (int64_t j = (y / CBASE) * CBASE; j < y; ++j) {
+      for (int64_t i = (ii * CBASE); i < ((ii + 1) * CBASE); ++i) {
+        BUF_INDEX(dst, j, y, i, x, transpose) = src[j * stride + i];
+      }
+    }
+  }
   for (int64_t j = (y / CBASE) * CBASE; j < y; ++j) {
-    for (int64_t i = 0; i < x; ++i) {
+    for (int64_t i = (x / CBASE) * CBASE; i < x; ++i) {
       BUF_INDEX(dst, j, y, i, x, transpose) = src[j * stride + i];
     }
   }
@@ -501,15 +517,6 @@ void matmul_base(F *__restrict__ out, const F *__restrict__ lhs, const F *__rest
   }
 }
 
-__attribute__((always_inline))
-static int64_t split_dim(int64_t n) {
-  // Special case: n is a power of 2.
-  if ((n & -n) == n)
-    return n/2;
-  const int64_t split = 1 << ((8 * sizeof(int64_t)) - __builtin_clzl(n - 1));
-  return split / 2;
-}
-
 template <typename F, bool transpose_lhs, bool transpose_rhs>
 void matmul_dac(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
                 int64_t m, int64_t n, int64_t k,
@@ -572,18 +579,41 @@ void matmul_dac(F *__restrict__ out, const F *__restrict__ lhs, const F *__restr
   }
 }
 
-// template <typename F, bool transpose_lhs, bool transpose_rhs>
+template <typename F>
+INLINEATTR
+void zero_init(F *__restrict__ out, int64_t m, int64_t n, int64_t mstride, int64_t nstride) {
+  const int64_t ZI_BASE = 16;
+  if ((m * n) <= ZI_BASE * ZI_BASE) {
+    for (int64_t j = 0; j < n; ++j)
+      for (int64_t i = 0; i < m; ++i)
+        out[j * mstride + i] = 0.0;
+    return;
+  }
+
+  if (m > n) {
+    const int64_t split = split_dim(m);
+    cilk_scope {
+      cilk_spawn zero_init(out, split, n, mstride, nstride);
+      zero_init(out + split, (m - split), n, mstride, nstride);
+    }
+  } else {
+    const int64_t split = split_dim(n);
+    cilk_scope {
+      cilk_spawn zero_init(out, m, split, mstride, nstride);
+      zero_init(out + (split * mstride),
+                m, (n - split), mstride, nstride);
+    }
+  }
+}
+
 template <typename F>
 INLINEATTR
 void matmul(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
             int64_t m, int64_t n, int64_t k,
             int32_t transpose_lhs, int32_t transpose_rhs) noexcept {
   // Initialize output to zero.
-  cilk_for (int64_t i = 0; i < m; ++i) {
-    cilk_for (int64_t j = 0; j < n; ++j) {
-      out[j * m + i] = 0.0;
-    }
-  }
+  zero_init(out, m, n, m, n);
+
   if (transpose_lhs && transpose_rhs) {
     matmul_dac<F, true, true>
       (out, lhs, rhs, m, n, k, m, n, k);
