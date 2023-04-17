@@ -17,7 +17,8 @@ Several libraries are required to configure and build this repo.
  CMake 3.7, but I have gotten it to work with only CMake 3.5
 
  https://stackoverflow.com/questions/42123509/cmake-finds-boost-but-the-imported-targets-not-available-for-boost-version
-           
+
+  On Fedora 36, I simply needed to install `boost-devel`.
 
 ## Python packages 
 
@@ -38,7 +39,7 @@ Several libraries are required to configure and build this repo.
 
   I tested this repo on the following configuration:
 
-    - Ubuntu 16.04
-    - python 2.7.12
-    - Boost 1.63 (manually installed, since default package was 1.58)
+    - Ubuntu 22.04
+    - python 3.6
+    - Boost 1.76
 

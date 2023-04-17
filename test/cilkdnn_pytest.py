@@ -1,7 +1,8 @@
 import numpy as np
 from PIL import Image
 import requests
-from StringIO import StringIO
+# from StringIO import StringIO
+from io import StringIO
 import tensorflow as tf
 import cilknn
 
@@ -10,7 +11,7 @@ A = np.array([[1.0, 2.0], [3.0, 4.0]],
              dtype=np.float32)
 B = np.array([[1.0, 0.0], [0.0, 1.0]],
              dtype=np.float32)
-print np.array_equal(A, cilknn.matmul_f32(A, B, 2, 2, 2, 0, 0))
+print(np.array_equal(A, cilknn.matmul_f32(A, B, 2, 2, 2, 0, 0)))
 
 def testCilkNNConv(array_4d, kernel_4d, strides, padding):
     graph = tf.Graph()
@@ -41,7 +42,7 @@ def testCilkNNConv(array_4d, kernel_4d, strides, padding):
          1 + ((cilknn_input.shape[2] + cilknn_padding[2] + cilknn_padding[3] - cilknn_kernel.shape[1]) / strides[1])),
         strides, cilknn_padding, [1,1,1,1])
 
-    print np.allclose(transformed_image, cilknn_out[0, :, :, 0])
+    print(np.allclose(transformed_image, cilknn_out[0, :, :, 0]))
 
 response = requests.get('http://vignette2.wikia.nocookie.net/grayscale/images/4/47/Lion.png/revision/latest?cb=20130926182831')
 lion_arr = np.array(Image.open(StringIO(response.content)))
