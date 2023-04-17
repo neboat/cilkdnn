@@ -91,6 +91,7 @@ int main(int argc, char *argv[]) {
   if (verify) {
     std::cerr << "Checking matmul algorithm.\n";
     matmul<EL_T>(C, A, B, m, n, k, transpose_lhs, transpose_rhs);
+    matmul<EL_T>(C, A, B, m, n, k, transpose_lhs, transpose_rhs);
     matmul_ploops<EL_T>(Ctmp, A, B, m, n, k, transpose_lhs, transpose_rhs);
 
     // matmul<EL_T, false, true>(C, A, B, m, n, k);
@@ -123,7 +124,7 @@ int main(int argc, char *argv[]) {
     std::cerr << "Check passed.\n";
   }
 
-  assert(NUM_TRAILS > 0);
+  assert(NUM_TRIALS > 0);
 
   std::vector<double> trials(NUM_TRIALS);
   auto init = std::chrono::steady_clock::now();
