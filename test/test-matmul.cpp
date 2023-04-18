@@ -99,15 +99,15 @@ int main(int argc, char *argv[]) {
 
     // Verify result
     int64_t diff_count = 0;
-    cilk_for (int64_t j = 0; j < n; ++j) {
-      cilk_for (int64_t i = 0; i < m; ++i) {
+    cilk_for(int64_t j = 0; j < n; ++j) {
+      cilk_for(int64_t i = 0; i < m; ++i) {
         EL_T diff = C[j * m + i] - Ctmp[j * m + i];
         if (diff < 0)
           diff = -diff;
-        if (!((diff < 0.01) || (diff/C[j * m + i] < 0.00001))) {
+        if (!((diff < 0.01) || (diff / C[j * m + i] < 0.00001))) {
           std::cerr << "Outputs differ: "
-                    << "C[" << i << ", " << j << "] = " << C[j*m + i] << " "
-                    << "Ctmp[" << i << ", " << j << "] = " << Ctmp[j*m + i]
+                    << "C[" << i << ", " << j << "] = " << C[j * m + i] << " "
+                    << "Ctmp[" << i << ", " << j << "] = " << Ctmp[j * m + i]
                     << "\n";
           diff_count++;
         }
@@ -134,14 +134,17 @@ int main(int argc, char *argv[]) {
     // matmul<EL_T, false, true>(C, A, B, m, n, k);
     matmul<EL_T>(C, A, B, m, n, k, transpose_lhs, transpose_rhs);
     auto end = std::chrono::steady_clock::now();
-    auto time = std::chrono::duration<double>(end-start).count();
-    auto stime = std::chrono::duration<double>(start-init).count();
+    auto time = std::chrono::duration<double>(end - start).count();
+    auto stime = std::chrono::duration<double>(start - init).count();
     std::cout << stime << " " << time << "\n";
     trials[trial] = time;
   }
 
   std::sort(trials.begin(), trials.end());
-  double median_trial = (NUM_TRIALS & 0x1) ? trials[NUM_TRIALS/2] : (trials[NUM_TRIALS/2] + trials[NUM_TRIALS/2 + 1]) / 2;
+  double median_trial =
+      (NUM_TRIALS & 0x1)
+          ? trials[NUM_TRIALS / 2]
+          : (trials[NUM_TRIALS / 2] + trials[NUM_TRIALS / 2 + 1]) / 2;
   std::cout << "median matmul time: " << median_trial << "s\n";
 
   delete[] C;

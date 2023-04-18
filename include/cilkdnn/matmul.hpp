@@ -11,8 +11,9 @@
 
 const int64_t BASE = 32768 * 24;
 
-#define INDEX(ii, m, jj, n, rhs)                                        \
-  ((rhs) ? ((((ii) / 4) * 4 * n) + ((jj) * 4) + ((ii) & 3)) : ((((jj) / 8) * 8 * m) + ((ii) * 8) + ((jj) & 7)))
+#define INDEX(ii, m, jj, n, rhs)                                               \
+  ((rhs) ? ((((ii) / 4) * 4 * n) + ((jj)*4) + ((ii)&3))                        \
+         : ((((jj) / 8) * 8 * m) + ((ii)*8) + ((jj)&7)))
 
 #define BUF_INDEX(arg, ii, m, jj, n, rhs)       \
   (arg[INDEX(ii, m, jj, n, rhs)])
@@ -35,16 +36,9 @@ buffer_transpose(F *__restrict__ dst, const F *__restrict__ src, int64_t x,
                  int64_t y, int64_t stride) {
   const int64_t TBASE = 4;
   for (int64_t jj = 0; jj < y / TBASE; ++jj) {
-    for (int64_t ii = 0; ii < x / TBASE; ++ii) {
-      for (int64_t i = (ii * TBASE); i < ((ii + 1) * TBASE); ++i) {
-        for (int64_t j = (jj * TBASE); j < ((jj + 1) * TBASE); ++j) {
-          BUF_INDEX(dst, j, y, i, x, true) = src[j * stride + i];
-        }
-      }
-    }
-    for (int64_t j = (jj * TBASE); j < ((jj + 1) * TBASE); ++j) {
-      for (int64_t i = (x / TBASE) * TBASE; i < x; ++i) {
-        BUF_INDEX(dst, j, y, i, x, true) = src[j * stride + i];
+    for (int64_t i = 0; i < x; ++i) {
+      for (int64_t j = (jj * TBASE); j < ((jj + 1) * TBASE); ++j) {
+	BUF_INDEX(dst, j, y, i, x, true) = src[j * stride + i];
       }
     }
   }
@@ -89,9 +83,9 @@ buffer_copy(F *__restrict__ dst, const F *__restrict__ src, int64_t x,
 }
 
 template <typename F, bool transposed, bool want_transpose>
-__attribute__((always_inline))
-static void buffer_init(F *__restrict__ dst, const F *__restrict__ src,
-                        int64_t m, int64_t n, int64_t mstride, int64_t nstride) {
+__attribute__((always_inline)) static void
+buffer_init(F *__restrict__ dst, const F *__restrict__ src, int64_t m,
+            int64_t n, int64_t mstride, int64_t nstride) {
   if (!want_transpose) {
     if (!transposed) {
       buffer_copy<F, false>(dst, src, m, n, mstride);
@@ -112,26 +106,26 @@ static void buffer_init(F *__restrict__ dst, const F *__restrict__ src,
 // A simple and general vectorized base case for matrix multiply.
 // This base case computes a INum x JNum submatrix in column-major
 // order from a INum subcolumn of A and a JNum subrow of B.
-template <typename F, int64_t INum, int64_t JNum, bool transpose_lhs, bool transpose_rhs>
-__attribute__((always_inline))
-void matmul_vec
-(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
- int64_t i, int64_t j, int64_t l,
- int64_t mstride, int64_t nstride, int64_t kstride) noexcept {
+template <typename F, int64_t INum, int64_t JNum, bool transpose_lhs,
+          bool transpose_rhs>
+__attribute__((always_inline)) void
+matmul_vec(F *__restrict__ out, const F *__restrict__ lhs,
+           const F *__restrict__ rhs, int64_t i, int64_t j, int64_t l,
+           int64_t mstride, int64_t nstride, int64_t kstride) noexcept {
   // Vector type
-  typedef F vF __attribute__((vector_size(sizeof(F)*INum)));
+  typedef F vF __attribute__((vector_size(sizeof(F) * INum)));
   vF outv[JNum];
 
   // Zero-initialize output vectors.
 #pragma clang loop unroll(full)
   for (int64_t vnum = 0; vnum < JNum; ++vnum)
-    outv[vnum] = (vF){ 0.0 };
+    outv[vnum] = (vF){0.0};
 
   // Get INum values from a column of lhs.
   vF lhsv;
 #pragma clang loop unroll(full)
   for (int64_t vidx = 0; vidx < INum; ++vidx) {
-    lhsv[vidx] = BUF_INDEX(lhs, l, kstride, i+vidx, mstride, transpose_lhs);
+    lhsv[vidx] = BUF_INDEX(lhs, l, kstride, i + vidx, mstride, transpose_lhs);
   }
 
   // Fill each rhs vector with a value from one of INum rows of rhs.
@@ -139,7 +133,7 @@ void matmul_vec
 #pragma clang loop unroll(full)
   for (int64_t vnum = 0; vnum < JNum; ++vnum) {
     // Read the value from a row of rhs.
-    F rhs_val = BUF_INDEX(rhs, j+vnum, nstride, l, kstride, transpose_rhs);
+    F rhs_val = BUF_INDEX(rhs, j + vnum, nstride, l, kstride, transpose_rhs);
     // Broadcast that value through one of the rhsv.
 #pragma clang loop unroll(full)
     for (int64_t vidx = 0; vidx < INum; ++vidx) {
@@ -158,7 +152,7 @@ void matmul_vec
   for (int64_t vnum = 0; vnum < JNum; ++vnum) {
 #pragma clang loop unroll(full)
     for (int64_t vidx = 0; vidx < INum; ++vidx) {
-      out[(j+vnum) * mstride + (i+vidx)] += outv[vnum][vidx];
+      out[(j + vnum) * mstride + (i + vidx)] += outv[vnum][vidx];
     }
   }
 }
@@ -167,33 +161,33 @@ void matmul_vec
 // This base case computes a INum x JNum submatrix in column-major
 // order from a INum subcolumn of A and a JNum subrow of B.
 template <typename F, int64_t INum, int64_t JNumMax>
-__attribute__((always_inline))
-void matmul_vec_flex
-(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
- int64_t i, int64_t j, int64_t l, int64_t JNum, int64_t KNum,
- int64_t mstride, int64_t nstride, int64_t kstride, int64_t outstride) noexcept {
+__attribute__((always_inline)) void
+matmul_vec_flex(F *__restrict__ out, const F *__restrict__ lhs,
+                const F *__restrict__ rhs, int64_t i, int64_t j, int64_t l,
+                int64_t JNum, int64_t KNum, int64_t mstride, int64_t nstride,
+                int64_t kstride, int64_t outstride) noexcept {
   __builtin_assume(JNum < JNumMax);
   // Vector type
-  typedef F vF __attribute__((vector_size(sizeof(F)*INum)));
+  typedef F vF __attribute__((vector_size(sizeof(F) * INum)));
   vF outv[JNum];
 
   // Zero-initialize output vectors.
   for (int64_t vnum = 0; vnum < JNum; ++vnum)
-    outv[vnum] = (vF){ 0.0 };
+    outv[vnum] = (vF){0.0};
 
   for (int64_t my_l = l; my_l < l + KNum; ++my_l) {
     // Get INum values from a column of lhs.
     vF lhsv;
 #pragma clang loop unroll(full)
     for (int64_t vidx = 0; vidx < INum; ++vidx) {
-      lhsv[vidx] = BUF_INDEX(lhs, my_l, kstride, i+vidx, mstride, false);
+      lhsv[vidx] = BUF_INDEX(lhs, my_l, kstride, i + vidx, mstride, false);
     }
 
     // Fill each rhs vector with a value from one of INum rows of rhs.
     vF rhsv[JNum];
     for (int64_t vnum = 0; vnum < JNum; ++vnum) {
       // Read the value from a row of rhs.
-      F rhs_val = BUF_INDEX(rhs, j+vnum, nstride, my_l, kstride, true);
+      F rhs_val = BUF_INDEX(rhs, j + vnum, nstride, my_l, kstride, true);
       // Broadcast that value through one of the rhsv.
 #pragma clang loop unroll(full)
       for (int64_t vidx = 0; vidx < INum; ++vidx) {
@@ -211,7 +205,7 @@ void matmul_vec_flex
   for (int64_t vnum = 0; vnum < JNum; ++vnum) {
 #pragma clang loop unroll(full)
     for (int64_t vidx = 0; vidx < INum; ++vidx) {
-      out[(j+vnum) * outstride + (i+vidx)] += outv[vnum][vidx];
+      out[(j + vnum) * outstride + (i + vidx)] += outv[vnum][vidx];
     }
   }
 }
@@ -220,25 +214,26 @@ void matmul_vec_flex
 // This base case computes a INum x JNum submatrix in column-major
 // order from a INum subcolumn of A and a JNum subrow of B.
 template <typename F, int64_t JNum, int64_t INumMax>
-__attribute__((always_inline))
-void matmul_vec_flex_col
-(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
- int64_t i, int64_t j, int64_t l, int64_t INum, int64_t KNum,
- int64_t mstride, int64_t nstride, int64_t kstride, int64_t outstride) noexcept {
+__attribute__((always_inline)) void
+matmul_vec_flex_col(F *__restrict__ out, const F *__restrict__ lhs,
+                    const F *__restrict__ rhs, int64_t i, int64_t j, int64_t l,
+                    int64_t INum, int64_t KNum, int64_t mstride,
+                    int64_t nstride, int64_t kstride,
+                    int64_t outstride) noexcept {
   __builtin_assume(INum < INumMax);
   // Vector type
-  typedef F vF __attribute__((vector_size(sizeof(F)*JNum)));
+  typedef F vF __attribute__((vector_size(sizeof(F) * JNum)));
   vF outv[INum];
 
   // Zero-initialize output vectors.
   for (int64_t vnum = 0; vnum < INum; ++vnum)
-    outv[vnum] = (vF){ 0.0 };
+    outv[vnum] = (vF){0.0};
 
   for (int64_t my_l = l; my_l < l + KNum; ++my_l) {
     // Fill each lhs vector with a value from one of JNum rows of lhs.
     vF lhsv[INum];
     for (int64_t vnum = 0; vnum < INum; ++vnum) {
-      F lhs_val = BUF_INDEX(lhs, my_l, kstride, i+vnum, mstride, false);
+      F lhs_val = BUF_INDEX(lhs, my_l, kstride, i + vnum, mstride, false);
 #pragma clang loop unroll(full)
       for (int64_t vidx = 0; vidx < JNum; ++vidx) {
         lhsv[vnum][vidx] = lhs_val;
@@ -249,7 +244,7 @@ void matmul_vec_flex_col
     vF rhsv;
 #pragma clang loop unroll(full)
     for (int64_t vidx = 0; vidx < JNum; ++vidx) {
-      rhsv[vidx] = BUF_INDEX(rhs, j+vidx, nstride, my_l, kstride, true);
+      rhsv[vidx] = BUF_INDEX(rhs, j + vidx, nstride, my_l, kstride, true);
     }
 
     // Each output vector gets the element-wise product of lhsv and one
@@ -262,7 +257,7 @@ void matmul_vec_flex_col
   for (int64_t vnum = 0; vnum < INum; ++vnum) {
 #pragma clang loop unroll(full)
     for (int64_t vidx = 0; vidx < JNum; ++vidx) {
-      out[(j+vidx) * outstride + (i+vnum)] += outv[vnum][vidx];
+      out[(j + vidx) * outstride + (i + vnum)] += outv[vnum][vidx];
     }
   }
 }
@@ -272,13 +267,13 @@ void matmul_vec_flex_col
 // vectorized base case, this version uses fewer memory accesses by
 // storing the outer-product result in vector registers.
 template <typename F>
-__attribute__((always_inline))
-void matmul_vec_op_halfvec
-(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
- int64_t i, int64_t j, int64_t l, int64_t KNum,
- int64_t mstride, int64_t nstride, int64_t kstride, int64_t outstride) noexcept {
+__attribute__((always_inline)) void
+matmul_vec_op_halfvec(F *__restrict__ out, const F *__restrict__ lhs,
+                      const F *__restrict__ rhs, int64_t i, int64_t j,
+                      int64_t l, int64_t KNum, int64_t mstride, int64_t nstride,
+                      int64_t kstride, int64_t outstride) noexcept {
   // Vector type
-  typedef F vF __attribute__((vector_size(sizeof(F)*4)));
+  typedef F vF __attribute__((vector_size(sizeof(F) * 4)));
 
   // Vectors storing output submatrix.
   vF outv[4];
@@ -286,7 +281,7 @@ void matmul_vec_op_halfvec
   // Zero-initialize the output vectors.
 #pragma clang loop unroll(full)
   for (int64_t vnum = 0; vnum < 4; ++vnum)
-    outv[vnum] = (vF){ 0.0 };
+    outv[vnum] = (vF){0.0};
 
   for (int64_t my_l = l; my_l < l + KNum; ++my_l) {
     // In the following comments, A denotes the rhs, and B denotes the lhs.
@@ -296,7 +291,7 @@ void matmul_vec_op_halfvec
     vF lhsv;
 #pragma clang loop unroll(full)
     for (int64_t vidx = 0; vidx < 4; ++vidx) {
-      lhsv[vidx] = BUF_INDEX(lhs, my_l, kstride, i+vidx, mstride, false);
+      lhsv[vidx] = BUF_INDEX(lhs, my_l, kstride, i + vidx, mstride, false);
     }
 
     // Store a subrow of rhs into rhsv, replicated twice.
@@ -304,7 +299,7 @@ void matmul_vec_op_halfvec
     vF rhsv;
 #pragma clang loop unroll(full)
     for (int64_t vidx = 0; vidx < 4; ++vidx) {
-      rhsv[vidx] = BUF_INDEX(rhs, j+vidx, nstride, my_l, kstride, true);
+      rhsv[vidx] = BUF_INDEX(rhs, j + vidx, nstride, my_l, kstride, true);
     }
 
     // Perform the multiplications using two vector shuffles --- one
@@ -346,13 +341,12 @@ void matmul_vec_op_halfvec
   // A0B3, A1B3, A2B3, A3B3
   st[7] = __builtin_shufflevector(st[3], st[1], 0, 1, 6, 7);
 
-
   // Add the output vectors to the output matrix.
 #pragma clang loop unroll(full)
   for (int64_t vnum = 0; vnum < 4; ++vnum) {
 #pragma clang loop unroll(full)
     for (int64_t vidx = 0; vidx < 4; ++vidx) {
-      out[(j+vnum) * outstride + (i+vidx)] += st[4+vnum][vidx];
+      out[(j + vnum) * outstride + (i + vidx)] += st[4 + vnum][vidx];
     }
   }
 }
@@ -362,13 +356,13 @@ void matmul_vec_op_halfvec
 // vectorized base case, this version uses fewer memory accesses by
 // storing the outer-product result in vector registers.
 template <typename F>
-__attribute__((always_inline))
-void matmul_vec_op
-(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
- int64_t i, int64_t j, int64_t l, int64_t KNum,
- int64_t mstride, int64_t nstride, int64_t kstride, int64_t outstride) noexcept {
+__attribute__((always_inline)) void
+matmul_vec_op(F *__restrict__ out, const F *__restrict__ lhs,
+              const F *__restrict__ rhs, int64_t i, int64_t j, int64_t l,
+              int64_t KNum, int64_t mstride, int64_t nstride, int64_t kstride,
+              int64_t outstride) noexcept {
   // Vector type
-  typedef F vF __attribute__((vector_size(sizeof(F)*8)));
+  typedef F vF __attribute__((vector_size(sizeof(F) * 8)));
 
   // Vectors storing output submatrix.
   vF outv[4];
@@ -376,7 +370,7 @@ void matmul_vec_op
   // Zero-initialize the output vectors.
 #pragma clang loop unroll(full)
   for (int64_t vnum = 0; vnum < 4; ++vnum)
-    outv[vnum] = (vF){ 0.0 };
+    outv[vnum] = (vF){0.0};
 
   for (int64_t my_l = l; my_l < l + KNum; ++my_l) {
     // Store a subcolumn of lhs into lhsv.
@@ -384,14 +378,14 @@ void matmul_vec_op
     vF lhsv;
 #pragma clang loop unroll(full)
     for (int64_t vidx = 0; vidx < 8; ++vidx)
-      lhsv[vidx] = BUF_INDEX(lhs, my_l, kstride, i+vidx, mstride, false);
+      lhsv[vidx] = BUF_INDEX(lhs, my_l, kstride, i + vidx, mstride, false);
 
     // Store a subrow of rhs into rhsv, replicated twice.
     // rhsv = B0 B1 B2 B3 B0 B1 B2 B3
     vF rhsv;
 #pragma clang loop unroll(full)
     for (int64_t vidx = 0; vidx < 4; ++vidx) {
-      rhsv[vidx] = BUF_INDEX(rhs, j+vidx, nstride, my_l, kstride, true);
+      rhsv[vidx] = BUF_INDEX(rhs, j + vidx, nstride, my_l, kstride, true);
       rhsv[vidx + 4] = rhsv[vidx];
     }
 
@@ -440,7 +434,7 @@ void matmul_vec_op
   for (int64_t vnum = 0; vnum < 4; ++vnum) {
 #pragma clang loop unroll(full)
     for (int64_t vidx = 0; vidx < 8; ++vidx) {
-      out[(j+vnum) * outstride + (i+vidx)] += st[4+vnum][vidx];
+      out[(j + vnum) * outstride + (i + vidx)] += st[4 + vnum][vidx];
     }
   }
 }
@@ -456,8 +450,8 @@ const int64_t mVec = 8;
 
 // Base-case for the divide-and-conquer matmul.
 template <typename F, bool transpose_lhs, bool transpose_rhs>
-void matmul_base(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
-                 int64_t m, int64_t n, int64_t k,
+void matmul_base(F *__restrict__ out, const F *__restrict__ lhs,
+                 const F *__restrict__ rhs, int64_t m, int64_t n, int64_t k,
                  int64_t mstride, int64_t nstride, int64_t kstride) noexcept {
   // The stride of the output is mstride.
   const int64_t outstride = mstride;
@@ -471,46 +465,48 @@ void matmul_base(F *__restrict__ out, const F *__restrict__ lhs, const F *__rest
   // thread_local F *rhsTmp = nullptr;
   // if (!rhsTmp) rhsTmp = new (std::align_val_t(64)) F[BASE / sizeof(F)];
 
-  buffer_init<F, transpose_lhs, transpose_lhs>(lhsTmp, lhs, m, k, mstride, kstride);
-  buffer_init<F, transpose_rhs, !transpose_rhs>(rhsTmp, rhs, k, n, kstride, nstride);
+  buffer_init<F, transpose_lhs, transpose_lhs>(lhsTmp, lhs, m, k, mstride,
+                                               kstride);
+  buffer_init<F, transpose_rhs, !transpose_rhs>(rhsTmp, rhs, k, n, kstride,
+                                                nstride);
 
   // Handle a vectorizable hyperrectangle whose sides are multiples of
   // nVec and mVec.  This hyperrectangle can be handled fully with
   // vector operations using matmul_vec_op.
-  for (int64_t jj = 0; jj < n/nVec; ++jj) {
-    for (int64_t ii = 0; ii < m/mVec; ++ii) {
-      matmul_vec_op<F>
-        (out, lhsTmp, rhsTmp, mVec * ii, nVec * jj, 0, k, m, n, k, outstride);
+  for (int64_t jj = 0; jj < n / nVec; ++jj) {
+    for (int64_t ii = 0; ii < m / mVec; ++ii) {
+      matmul_vec_op<F>(out, lhsTmp, rhsTmp, mVec * ii, nVec * jj, 0, k, m, n, k,
+                       outstride);
     }
   }
-  if (mVec * (m/mVec) < m) {
+  if (mVec * (m / mVec) < m) {
     // Handle extra entries in the m dimension.
-    if (2 * (m/mVec) < (m/(mVec / 2))) {
-      for (int64_t jj = 0; jj < n/nVec; ++jj) {
-        matmul_vec_op_halfvec<F>(out, lhsTmp, rhsTmp, mVec * (m/mVec),
+    if (2 * (m / mVec) < (m / (mVec / 2))) {
+      for (int64_t jj = 0; jj < n / nVec; ++jj) {
+        matmul_vec_op_halfvec<F>(out, lhsTmp, rhsTmp, mVec * (m / mVec),
                                  nVec * jj, 0, k, m, n, k, outstride);
       }
     }
-    for (int64_t jj = 0; jj < n/nVec; ++jj) {
-      matmul_vec_flex_col<F, nVec, mVec/2>(out, lhsTmp, rhsTmp, (mVec/2) * (m/(mVec/2)),
-                                           jj * nVec, 0, m - (mVec/2) * (m/(mVec/2)), k,
-                                           m, n, k, outstride);
+    for (int64_t jj = 0; jj < n / nVec; ++jj) {
+      matmul_vec_flex_col<F, nVec, mVec / 2>(
+          out, lhsTmp, rhsTmp, (mVec / 2) * (m / (mVec / 2)), jj * nVec, 0,
+          m - (mVec / 2) * (m / (mVec / 2)), k, m, n, k, outstride);
     }
   }
-  if (nVec * (n/nVec) < n) {
+  if (nVec * (n / nVec) < n) {
     // Handle extra entries in the n dimension.
-    for (int64_t ii = 0; ii < m/mVec; ++ii) {
-      matmul_vec_flex<F, mVec, nVec>(out, lhsTmp, rhsTmp, mVec * ii, nVec * (n/nVec), 0,
-                                     n - (nVec * (n/nVec)), k, m, n, k, outstride);
+    for (int64_t ii = 0; ii < m / mVec; ++ii) {
+      matmul_vec_flex<F, mVec, nVec>(
+          out, lhsTmp, rhsTmp, mVec * ii, nVec * (n / nVec), 0,
+          n - (nVec * (n / nVec)), k, m, n, k, outstride);
     }
     // We permute the order of loops here to exploit spatial locality
     // in out and lhs.
-    for (int64_t j = nVec * (n/nVec); j < n; ++j) {
+    for (int64_t j = nVec * (n / nVec); j < n; ++j) {
       for (int64_t l = 0; l < k; ++l) {
-        for (int64_t i = mVec * (m/mVec); i < m; ++i) {
-          out[j * outstride + i] +=
-            BUF_INDEX(lhsTmp, l, k, i, m, false) *
-            BUF_INDEX(rhsTmp, j, n, l, k, true);
+        for (int64_t i = mVec * (m / mVec); i < m; ++i) {
+          out[j * outstride + i] += BUF_INDEX(lhsTmp, l, k, i, m, false) *
+                                    BUF_INDEX(rhsTmp, j, n, l, k, true);
         }
       }
     }
@@ -518,8 +514,8 @@ void matmul_base(F *__restrict__ out, const F *__restrict__ lhs, const F *__rest
 }
 
 template <typename F, bool transpose_lhs, bool transpose_rhs>
-void matmul_dac(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
-                int64_t m, int64_t n, int64_t k,
+void matmul_dac(F *__restrict__ out, const F *__restrict__ lhs,
+                const F *__restrict__ rhs, int64_t m, int64_t n, int64_t k,
                 int64_t mstride, int64_t nstride, int64_t kstride) noexcept {
   // if (m == 0 || n == 0 || k == 0)
   //   return;
@@ -527,8 +523,8 @@ void matmul_dac(F *__restrict__ out, const F *__restrict__ lhs, const F *__restr
   // Check that the total size of the submatrices fits within BASE
   // bytes.
   if ((m * n) + (m * k) + (n * k) <= BASE / sizeof(F)) {
-    matmul_base<F, transpose_lhs, transpose_rhs>
-      (out, lhs, rhs, m, n, k, mstride, nstride, kstride);
+    matmul_base<F, transpose_lhs, transpose_rhs>(out, lhs, rhs, m, n, k,
+                                                 mstride, nstride, kstride);
     return;
   }
 
@@ -540,48 +536,43 @@ void matmul_dac(F *__restrict__ out, const F *__restrict__ lhs, const F *__restr
   // n instead of m.
   if (max_dim == n) {
     const int64_t split = split_dim(n);
-    cilk_spawn matmul_dac<F, transpose_lhs, transpose_rhs>
-      (out,
-       &ARG_INDEX(lhs, 0, kstride, 0, mstride, transpose_lhs),
-       &ARG_INDEX(rhs, 0, nstride, 0, kstride, transpose_rhs),
-       m, split, k, mstride, nstride, kstride);
-    matmul_dac<F, transpose_lhs, transpose_rhs>
-      (out + (split * mstride),
-       &ARG_INDEX(lhs, 0, kstride, 0, mstride, transpose_lhs),
-       &ARG_INDEX(rhs, split, nstride, 0, kstride, transpose_rhs),
-       m, (n - split), k, mstride, nstride, kstride);
+    cilk_spawn matmul_dac<F, transpose_lhs, transpose_rhs>(
+        out, &ARG_INDEX(lhs, 0, kstride, 0, mstride, transpose_lhs),
+        &ARG_INDEX(rhs, 0, nstride, 0, kstride, transpose_rhs), m, split, k,
+        mstride, nstride, kstride);
+    matmul_dac<F, transpose_lhs, transpose_rhs>(
+        out + (split * mstride),
+        &ARG_INDEX(lhs, 0, kstride, 0, mstride, transpose_lhs),
+        &ARG_INDEX(rhs, split, nstride, 0, kstride, transpose_rhs), m,
+        (n - split), k, mstride, nstride, kstride);
     cilk_sync;
   } else if (max_dim == m) {
     const int64_t split = split_dim(m);
-    cilk_spawn matmul_dac<F, transpose_lhs, transpose_rhs>
-      (out,
-       &ARG_INDEX(lhs, 0, kstride, 0, mstride, transpose_lhs),
-       &ARG_INDEX(rhs, 0, nstride, 0, kstride, transpose_rhs),
-       split, n, k, mstride, nstride, kstride);
-    matmul_dac<F, transpose_lhs, transpose_rhs>
-      (out + split,
-       &ARG_INDEX(lhs, 0, kstride, split, mstride, transpose_lhs),
-       &ARG_INDEX(rhs, 0, nstride, 0, kstride, transpose_rhs),
-       (m - split), n, k, mstride, nstride, kstride);
+    cilk_spawn matmul_dac<F, transpose_lhs, transpose_rhs>(
+        out, &ARG_INDEX(lhs, 0, kstride, 0, mstride, transpose_lhs),
+        &ARG_INDEX(rhs, 0, nstride, 0, kstride, transpose_rhs), split, n, k,
+        mstride, nstride, kstride);
+    matmul_dac<F, transpose_lhs, transpose_rhs>(
+        out + split, &ARG_INDEX(lhs, 0, kstride, split, mstride, transpose_lhs),
+        &ARG_INDEX(rhs, 0, nstride, 0, kstride, transpose_rhs), (m - split), n,
+        k, mstride, nstride, kstride);
     cilk_sync;
   } else { // max_dim == k
     const int64_t split = split_dim(k);
-    matmul_dac<F, transpose_lhs, transpose_rhs>
-      (out,
-       &ARG_INDEX(lhs, 0, kstride, 0, mstride, transpose_lhs),
-       &ARG_INDEX(rhs, 0, nstride, 0, kstride, transpose_rhs),
-       m, n, split, mstride, nstride, kstride);
-    matmul_dac<F, transpose_lhs, transpose_rhs>
-      (out,
-       &ARG_INDEX(lhs, split, kstride, 0, mstride, transpose_lhs),
-       &ARG_INDEX(rhs, 0, nstride, split, kstride, transpose_rhs),
-       m, n, (k - split), mstride, nstride, kstride);
+    matmul_dac<F, transpose_lhs, transpose_rhs>(
+        out, &ARG_INDEX(lhs, 0, kstride, 0, mstride, transpose_lhs),
+        &ARG_INDEX(rhs, 0, nstride, 0, kstride, transpose_rhs), m, n, split,
+        mstride, nstride, kstride);
+    matmul_dac<F, transpose_lhs, transpose_rhs>(
+        out, &ARG_INDEX(lhs, split, kstride, 0, mstride, transpose_lhs),
+        &ARG_INDEX(rhs, 0, nstride, split, kstride, transpose_rhs), m, n,
+        (k - split), mstride, nstride, kstride);
   }
 }
 
 template <typename F>
-INLINEATTR
-void zero_init(F *__restrict__ out, int64_t m, int64_t n, int64_t mstride, int64_t nstride) {
+INLINEATTR void zero_init(F *__restrict__ out, int64_t m, int64_t n,
+                          int64_t mstride, int64_t nstride) {
   const int64_t ZI_BASE = 16;
   if ((m * n) <= ZI_BASE * ZI_BASE) {
     for (int64_t j = 0; j < n; ++j)
@@ -600,74 +591,73 @@ void zero_init(F *__restrict__ out, int64_t m, int64_t n, int64_t mstride, int64
     const int64_t split = split_dim(n);
     cilk_scope {
       cilk_spawn zero_init(out, m, split, mstride, nstride);
-      zero_init(out + (split * mstride),
-                m, (n - split), mstride, nstride);
+      zero_init(out + (split * mstride), m, (n - split), mstride, nstride);
     }
   }
 }
 
 template <typename F>
-INLINEATTR
-void matmul(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
-            int64_t m, int64_t n, int64_t k,
-            int32_t transpose_lhs, int32_t transpose_rhs) noexcept {
+INLINEATTR void matmul(F *__restrict__ out, const F *__restrict__ lhs,
+                       const F *__restrict__ rhs, int64_t m, int64_t n,
+                       int64_t k, int32_t transpose_lhs,
+                       int32_t transpose_rhs) noexcept {
   // Initialize output to zero.
   zero_init(out, m, n, m, n);
 
   if (transpose_lhs && transpose_rhs) {
-    matmul_dac<F, true, true>
-      (out, lhs, rhs, m, n, k, m, n, k);
+    matmul_dac<F, true, true>(out, lhs, rhs, m, n, k, m, n, k);
   } else if (transpose_lhs && !transpose_rhs) {
-    matmul_dac<F, true, false>
-      (out, lhs, rhs, m, n, k, m, n, k);
+    matmul_dac<F, true, false>(out, lhs, rhs, m, n, k, m, n, k);
   } else if (!transpose_lhs && transpose_rhs) {
-    matmul_dac<F, false, true>
-      (out, lhs, rhs, m, n, k, m, n, k);
+    matmul_dac<F, false, true>(out, lhs, rhs, m, n, k, m, n, k);
   } else {
-    matmul_dac<F, false, false>
-      (out, lhs, rhs, m, n, k, m, n, k);
+    matmul_dac<F, false, false>(out, lhs, rhs, m, n, k, m, n, k);
   }
 }
 
 template <typename F>
-INLINEATTR
-void matmul_ploops(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
-                   int64_t m, int64_t n, int64_t k, int32_t transpose_lhs, int32_t transpose_rhs) {
+INLINEATTR void matmul_ploops(F *__restrict__ out, const F *__restrict__ lhs,
+                              const F *__restrict__ rhs, int64_t m, int64_t n,
+                              int64_t k, int32_t transpose_lhs,
+                              int32_t transpose_rhs) {
   if (n > m) {
-    cilk_for (int64_t i = 0; i < m; ++i) {
-      cilk_for (int64_t j = 0; j < n; ++j) {
+    cilk_for(int64_t i = 0; i < m; ++i) {
+      cilk_for(int64_t j = 0; j < n; ++j) {
         out[j * m + i] = 0.0;
         for (int64_t l = 0; l < k; ++l)
-          out[j * m + i] +=
-            ARG_INDEX(lhs, l, k, i, m, transpose_lhs) *
-            ARG_INDEX(rhs, j, n, l, k, transpose_rhs);
+          out[j * m + i] += ARG_INDEX(lhs, l, k, i, m, transpose_lhs) *
+                            ARG_INDEX(rhs, j, n, l, k, transpose_rhs);
       }
     }
   } else {
-    cilk_for (int64_t j = 0; j < n; ++j) {
-      cilk_for (int64_t i = 0; i < m; ++i) {
+    cilk_for(int64_t j = 0; j < n; ++j) {
+      cilk_for(int64_t i = 0; i < m; ++i) {
         out[j * m + i] = 0.0;
         for (int64_t l = 0; l < k; ++l)
-          out[j * m + i] +=
-            ARG_INDEX(lhs, l, k, i, m, transpose_lhs) *
-            ARG_INDEX(rhs, j, n, l, k, transpose_rhs);
+          out[j * m + i] += ARG_INDEX(lhs, l, k, i, m, transpose_lhs) *
+                            ARG_INDEX(rhs, j, n, l, k, transpose_rhs);
       }
     }
   }
 }
 
-template void
-matmul_ploops<float>(float *__restrict__ out, const float *__restrict__ lhs, const float *__restrict__ rhs,
-                                   int64_t m, int64_t n, int64_t k, int32_t transpose_lhs, int32_t transpose_rhs);
+template void matmul_ploops<float>(float *__restrict__ out,
+                                   const float *__restrict__ lhs,
+                                   const float *__restrict__ rhs, int64_t m,
+                                   int64_t n, int64_t k, int32_t transpose_lhs,
+                                   int32_t transpose_rhs);
 
-template void
-matmul_ploops<double>(double *__restrict__ out, const double *__restrict__ lhs, const double *__restrict__ rhs,
-                                    int64_t m, int64_t n, int64_t k, int32_t transpose_lhs, int32_t transpose_rhs);
+template void matmul_ploops<double>(double *__restrict__ out,
+                                    const double *__restrict__ lhs,
+                                    const double *__restrict__ rhs, int64_t m,
+                                    int64_t n, int64_t k, int32_t transpose_lhs,
+                                    int32_t transpose_rhs);
 
 extern "C" {
 INLINEATTR
-void matmul_f32(float *__restrict__ out, const float *__restrict__ lhs, const float *__restrict__ rhs,
-                int64_t m, int64_t n, int64_t k, int32_t transpose_lhs, int32_t transpose_rhs) {
+void matmul_f32(float *__restrict__ out, const float *__restrict__ lhs,
+                const float *__restrict__ rhs, int64_t m, int64_t n, int64_t k,
+                int32_t transpose_lhs, int32_t transpose_rhs) {
 #ifndef NDEBUG
   matmul<float>(out, lhs, rhs, m, n, k, transpose_lhs, transpose_rhs);
 #else
@@ -676,13 +666,13 @@ void matmul_f32(float *__restrict__ out, const float *__restrict__ lhs, const fl
 }
 
 INLINEATTR
-void matmul_f64(double *__restrict__ out, const double *__restrict__ lhs, const double *__restrict__ rhs,
-                int64_t m, int64_t n, int64_t k, int32_t transpose_lhs, int32_t transpose_rhs) {
+void matmul_f64(double *__restrict__ out, const double *__restrict__ lhs,
+                const double *__restrict__ rhs, int64_t m, int64_t n, int64_t k,
+                int32_t transpose_lhs, int32_t transpose_rhs) {
 #ifndef NDEBUG
   matmul<double>(out, lhs, rhs, m, n, k, transpose_lhs, transpose_rhs);
 #else
   matmul<double>(out, lhs, rhs, m, n, k, transpose_lhs, transpose_rhs);
 #endif
 }
-
 }
