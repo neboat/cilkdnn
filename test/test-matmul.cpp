@@ -7,10 +7,13 @@
 #include <iostream>
 
 #include <cilkdnn/matmul.hpp>
+#include <cilk/cilkscale.h>
 
 #include <chrono>
 #include <vector>
 #include <cmath>
+
+#include <unistd.h>
 
 // template <typename F, bool transpose_lhs, bool transpose_rhs>
 // void matmul(F *__restrict__ out, const F *__restrict__ lhs, const F *__restrict__ rhs,
@@ -30,6 +33,24 @@
 
 using EL_T = double;
 static const int NUM_TRIALS = 51;
+
+// __attribute__((weak)) int fib(int n) {
+//   if (n < 2)
+//     return n;
+//   int x = cilk_spawn fib(n - 1);
+//   int y = fib(n - 2);
+//   cilk_sync;
+//   return x + y;
+// }
+
+// const int64_t big_array_size = 1UL << 27;
+// int64_t big_array[big_array_size] = {0};
+
+// __attribute__((weak)) void clear_cache(int64_t x) {
+//   cilk_for(int64_t i = 0; i < big_array_size; ++i)
+//     ++big_array[i];
+//   fprintf(stderr, "big_array[%ld] %ld\n", x, big_array[x]);
+// }
 
 int main(int argc, char *argv[]) {
   int m = 10;
@@ -89,9 +110,12 @@ int main(int argc, char *argv[]) {
   //     B[j * k + l] = (EL_T)rand() / (EL_T)RAND_MAX;
 
   if (verify) {
+    zero_init(C, m, n, m, n);
+    zero_init(Ctmp, m, n, m, n);
     std::cerr << "Checking matmul algorithm.\n";
     matmul<EL_T>(C, A, B, m, n, k, transpose_lhs, transpose_rhs);
-    matmul<EL_T>(C, A, B, m, n, k, transpose_lhs, transpose_rhs);
+    // zero_init(C, m, n, m, n);
+    matmul<EL_T, /* initOutput */ true>(C, A, B, m, n, k, transpose_lhs, transpose_rhs);
     matmul_ploops<EL_T>(Ctmp, A, B, m, n, k, transpose_lhs, transpose_rhs);
 
     // matmul<EL_T, false, true>(C, A, B, m, n, k);
@@ -127,25 +151,46 @@ int main(int argc, char *argv[]) {
   assert(NUM_TRIALS > 0);
 
   std::vector<double> trials(NUM_TRIALS);
+  // double prod = 1.0;
+  // double sum = 0.0;
   auto init = std::chrono::steady_clock::now();
 
+  cilk_scope {
   for (int trial = 0; trial < NUM_TRIALS; ++trial) {
+    // fib(40);
+    // Initialize output to zero.
+    zero_init(C, m, n, m, n);
+
     auto start = std::chrono::steady_clock::now();
     // matmul<EL_T, false, true>(C, A, B, m, n, k);
-    matmul<EL_T>(C, A, B, m, n, k, transpose_lhs, transpose_rhs);
+    wsp_t start_wsp = wsp_getworkspan();
+    // matmul<EL_T, true>(C, A, B, m, n, k, transpose_lhs, transpose_rhs);
+    matmul<EL_T, false>(C, A, B, m, n, k, transpose_lhs, transpose_rhs);
     auto end = std::chrono::steady_clock::now();
+    wsp_t end_wsp = wsp_getworkspan();
     auto time = std::chrono::duration<double>(end - start).count();
     auto stime = std::chrono::duration<double>(start - init).count();
-    std::cout << stime << " " << time << "\n";
     trials[trial] = time;
+    std::cout << stime << " " << time << "\n";
+    wsp_dump(end_wsp - start_wsp, "matmul");
+    usleep(10000);
+    // clear_cache(trial);
+    // prod *= time;
+    // sum += time;
+  }
   }
 
+  // auto end = std::chrono::steady_clock::now();
+  // std::cout << "avg. matmul time: " << std::chrono::duration<double>(end-start).count() / NUM_TRIALS << "s\n";
   std::sort(trials.begin(), trials.end());
   double median_trial =
       (NUM_TRIALS & 0x1)
           ? trials[NUM_TRIALS / 2]
           : (trials[NUM_TRIALS / 2] + trials[NUM_TRIALS / 2 + 1]) / 2;
   std::cout << "median matmul time: " << median_trial << "s\n";
+  // double geomean = pow(prod, 1.0/(double)NUM_TRIALS);
+  // std::cout << "geomean " << geomean << ", avg " << sum / (double)NUM_TRIALS
+  // << "\n";
 
   delete[] C;
   delete[] Ctmp;
